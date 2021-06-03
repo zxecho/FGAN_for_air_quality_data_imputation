@@ -24,11 +24,11 @@ class Discriminator(nn.Module):
     def __init__(self, input_size, hidden_dim):
         super(Discriminator, self).__init__()
         self.d = nn.Sequential(
-            nn.Linear(input_size * 2, hidden_dim//2),
+            nn.Linear(input_size * 2, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim//2, hidden_dim//2),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
-            nn.Linear(hidden_dim//2, input_size),
+            nn.Linear(hidden_dim, input_size),
             nn.Sigmoid()
         )
 
@@ -40,15 +40,17 @@ class Discriminator(nn.Module):
 
 class Generator(nn.Module):
 
-    def __init__(self, input_size, hidden_dim):
+    def __init__(self, input_size, hidden_dim, output_size):
         super(Generator, self).__init__()
         self.g = nn.Sequential(
-            nn.Linear(input_size * 2, hidden_dim//2),
+            nn.Linear(input_size+output_size, hidden_dim),
+            nn.ReLU(),
+            nn.Linear(hidden_dim, hidden_dim//2),
             nn.ReLU(),
             nn.Linear(hidden_dim//2, hidden_dim//2),
             nn.ReLU(),
-            nn.Linear(hidden_dim//2, input_size),
-            nn.Sigmoid()
+            nn.Linear(hidden_dim//2, output_size),
+            nn.ReLU()
             # nn.Tanh()
         )
 
@@ -62,10 +64,11 @@ class Generator(nn.Module):
 def weights_init(m):
     classname = m.__class__.__name__
     if classname.find('Conv2d') != -1:
-        nn.init.xavier_normal_(m.weight.data)
+        # nn.init.xavier_normal_(m.weight.data)
+        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
         nn.init.constant_(m.bias.data, 0.0)
     elif classname.find('Linear') != -1:
-        # nn.init.xavier_normal_(m.weight)
-        nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+        nn.init.xavier_normal_(m.weight)
+        # nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
         nn.init.constant_(m.bias, 0.0)
 

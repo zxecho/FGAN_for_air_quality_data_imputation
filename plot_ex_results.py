@@ -35,7 +35,7 @@ def plot_local_indicator_avg_results(logdirs, save_path, save_name='', leg=None,
             ax.tick_params(labelsize=15)
             ax.set_ylabel('RMSE', size=15)
             # ax.set_xlabel('Missing rate(%)', size=13)
-            ax.set_xlabel('Participant', size=15)
+            ax.set_xlabel('Missing rate', size=15)
             ax.set_title(fig_title)
             ax.legend()
             ax.margins(x=0)
@@ -78,17 +78,18 @@ if __name__ == '__main__':
     exp_model = 'Local'   # Local / Fed / Fed_vs_Local
 
     if exp_model == 'Local':
-        data_dir = ['E:/zx/Fed-AQ/experiments_results/GAIN_A10D5T3one_mi(A_1r)-v2.xlsx',
+        data_dir = ['E:/zx/Fed-AQ/experiments_results/wGAI_norCO_one_mi(A_1r).xlsx',
+                    'E:/zx/Fed-AQ/experiments_results/GAIN_norCO_one_mi(A_1r).xlsx',
                     'E:/zx/Fed-AQ/experiments_results/EM_one_mi_v1((A)_1r).xlsx',
                     'E:/zx/Fed-AQ/experiments_results/Spline_one_mi_v1((A)_1r).xlsx',
                     # 'E:/zx/Fed-AQ/experiments_results/Cubic_one_mi_v1((A)_1r).xlsx',
                     # 'E:/zx/Fed-AQ/experiments_results/KNN_one_mi_v1((A)_1r).xlsx',
                     'E:/zx/Fed-AQ/experiments_results/Linear_one_mi_v1((A)_1r).xlsx',
-                    # 'E:/zx/Fed-AQ/experiments_results/MultiBayesian_one_mi_v1((A)_1r).xlsx'
+                    'E:/zx/Fed-AQ/experiments_results/MultiBayesian_one_mi_v1((A)_1r).xlsx'
                     ]
-        leg = ['GAN-based', 'EM',  'Spline', 'Linear']      # 'MICE'
+        leg = ['Ours', 'GAIN', 'EM',  'Spline', 'Linear', 'MICE']      # 'MICE'
         save_path = 'E:/zx/Fed-AQ/experiments_results/Figures/'
-        figure_name = 'one_mi(A_1r)_on_various_algos_v5'
+        figure_name = 'one_mi(A_1r)_on_various_algos_latest'
         plot_local_indicator_avg_results(data_dir, save_path=save_path, save_name=figure_name, leg=leg)
     elif exp_model == 'Fed':
         # dataset_number = 'one_mi((A5_B10_E15)_111)'

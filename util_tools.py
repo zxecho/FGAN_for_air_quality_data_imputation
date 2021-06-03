@@ -16,6 +16,11 @@ DIV_LINE_WIDTH = 50
 units = dict()
 
 
+def set_lr(optimizer, lr):
+    for group in optimizer.param_groups:
+        group['lr'] = lr
+
+
 # ================= Compute various indictors =================
 def compute_r2(x, y):
     r, p = pearsonr(x, y)
@@ -72,10 +77,12 @@ def compute_avg_of_data_in_file(args, dataset_index, results_logdir, csv_save_fp
     unit_sets = set(unit_sets)
 
     # 针对load_dataset_v2，对不同参与方，每个参与方都有自己的站点数据添加
-    if type(args.selected_stations[0]) == list:
-        station_names = args.clients
-    else:
-        station_names = args.selected_stations
+    # if type(args.selected_stations[0]) == list:
+    #     station_names = args.clients
+    # else:
+    #     station_names = args.selected_stations
+
+    station_names = args.clients
 
     indicator_avg_list = []
     for mode in leg:
@@ -234,7 +241,7 @@ def mkdir(path):
         return True
     else:
         # 如果目录存在则不创建，并提示目录已存在
-        print(path + ' 目录已存在')
+        # print(path + ' 目录已存在')
         return False
 
 
@@ -249,15 +256,16 @@ def sample_idx(m, n):
     return idx
 
 
-def sample_Z(m, n):
+def sample_Z(m, n, scale_factor=0.1):
     """
     用于采样随机扰动
+    :param scale_factor:
     :param m: batch_size
     :param n: Dim, 数据属性维度
     :return:
     """
-    return np.random.uniform(0., 0.01, size=[m, n])
-    # return np.random.normal(0, 0.2, size=[m, n])
+    return np.random.uniform(0., 1, size=[m, n])
+    # return np.random.normal(0.5, 0.2, size=[m, n]) * scale_factor
 
 
 def save_model(G, D, save_file=''):
@@ -279,6 +287,8 @@ def load_model(G, D, tag='', station='', save_file=''):
     G.load_state_dict(torch.load(g_load_path))
     D.load_state_dict(torch.load(d_load_path))
 
+    return G, D
+
 
 def save_as_csv(fpt, data, key='MSE'):
     dataframe = pd.DataFrame({key: data})
@@ -286,6 +296,8 @@ def save_as_csv(fpt, data, key='MSE'):
 
 
 def save2csv(fpt, data, columns, index):
+    if len(data) != len(columns):
+        data = [data]
     data = {key: value for key, value in zip(columns, data)}
     print('*** data: \n', data)
     dataframe = pd.DataFrame(data, columns=columns, index=index)

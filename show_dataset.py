@@ -5,6 +5,8 @@ from util_tools import save2json, load_json, mkdir, normalization
 import matplotlib.pyplot as plt
 import os
 from param_options import args_parser
+from Fed_GAIN.plot_indexes_resluts import get_all_datasets
+from util_tools import mkdir, compute_avg_of_data_in_file
 
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
@@ -269,7 +271,255 @@ def datasets_satistical(dataset_name, AQS, select_dim, **kwargs):
     return dataset_list
 
 
+def plot_indicator_avg_results_m(logdir, save_path, xaxis, value, save_csv_fpth, leg=None,
+                                 condition=None, select_dim=None):
+    # 重新实现了seaborn的带有均值线的多次实验结果图
+    if leg is None:
+        leg = ['Federated GAN', 'Local GAN']
+
+    datas = get_all_datasets(logdir, leg)
+
+    if isinstance(datas, list):
+        data = pd.concat(datas)
+        print('*** data: \n', data)
+
+    unit_sets = data['Unit'].values.tolist()
+    unit_sets = set(unit_sets)
+
+    condition_sets = data['Condition'].values.tolist()
+    condition_sets = set(condition_sets)
+
+    xaxis_sets = data[xaxis].values.tolist()
+    xaxis_sets = set(xaxis_sets)
+
+    indicator_avg_list = []
+    if value == 'all_rmse':
+        # 不同的condition
+        # 创建绘图
+        fig, ax = plt.subplots()
+        for mode in condition_sets:
+            avg_t = 0
+            # 计算被标记的不同unit之间的均值
+            condition_min_list = []
+            condition_max_list = []
+            condition_unit_data_list = []
+            condition_data = data[data.Condition == mode]
+            for u in unit_sets:
+                condition_unit_data = condition_data[condition_data.Unit == u][value].values
+                condition_unit_data_list.append(condition_unit_data.reshape((1, -1)))
+                avg_t += condition_unit_data
+
+            # 用于替代seaborn中的tsplot绘图函数
+            def tsplot(ax, x, data, **kw):
+                est = np.mean(data, axis=0)
+                sd = np.std(data, axis=0)
+                cis = (est - sd, est + sd)
+                x = np.array(x).astype(dtype=np.str)
+                ax.fill_between(x, cis[0], cis[1], alpha=0.2, **kw)
+                ax.plot(x, est, label=mode, **kw)
+                ax.tick_params(labelsize=13)
+                ax.set_ylabel('RMSE', size=13)
+                ax.set_xlabel('Participant', size=13)
+                ax.legend()
+                ax.margins(x=0)
+
+                return est, sd
+
+            # 将几次的实验数据进行拼接，形成一个（station， exp_time）形状的数组
+            all_condition_unit_data = np.concatenate(condition_unit_data_list, axis=0)
+            xaxis_from_sets = [i for i in xaxis_sets]
+
+            indicator_avg, indicator_std = tsplot(ax, xaxis_from_sets, all_condition_unit_data)
+
+            save_avg_csv_pt = save_csv_fpth + mode + '_' + value + '_avg_resluts.csv'
+            mode_save_data = {'RMSE': indicator_avg, 'std': indicator_std}
+            # 使用pandas保存成csv
+            dataframe = pd.DataFrame(mode_save_data)
+            dataframe.to_csv(save_avg_csv_pt, index=True, sep=',')
+            # save_all_avg_results(fed_save_csv_pt, indicator_avg, [value], xaxis)
+    else:
+        # 创建绘图
+        fig, ax = plt.subplots(2, 3, figsize=(19.2, 10.8))
+        plt.subplots_adjust(top=0.95)
+        for p, pollution in enumerate(select_dim):
+            # 不同的condition
+            for mode in condition_sets:
+                avg_t = 0
+                # 计算被标记的不同unit之间的均值
+                condition_min_list = []
+                condition_max_list = []
+                condition_unit_data_list = []
+                condition_data = data[data.Condition == mode]
+                for u in unit_sets:
+                    condition_unit_data = condition_data[condition_data.Unit == u][pollution].values
+                    condition_unit_data_list.append(condition_unit_data.reshape((1, -1)))
+                    avg_t += condition_unit_data
+
+                # 用于替代seaborn中的tsplot绘图函数
+                def tsplot(ax, x, data, **kw):
+                    est = np.mean(data, axis=0)
+                    sd = np.std(data, axis=0)
+                    cis = (est - sd, est + sd)
+                    x = np.array(x).astype(dtype=np.str)
+                    ax.fill_between(x, cis[0], cis[1], alpha=0.2, **kw)
+                    ax.plot(x, est, label=mode, **kw)
+                    ax.tick_params(labelsize=13)
+                    ax.set_ylabel(value.upper(), size=13)
+                    ax.set_xlabel('Participant', size=13)
+                    ax.set_title(pollution)
+                    ax.legend()
+                    ax.margins(x=0)
+
+                    return est, sd
+
+                # 将几次的实验数据进行拼接，形成一个（station， exp_time）形状的数组
+                all_condition_unit_data = np.concatenate(condition_unit_data_list, axis=0)
+                xaxis_from_sets = [i for i in xaxis_sets]
+
+                indicator_avg, indicator_std = tsplot(ax[p // 3, p % 3], xaxis_from_sets, all_condition_unit_data)
+
+                save_avg_csv_pt = save_csv_fpth + mode + '_' + pollution + '_avg_resluts.csv'
+                mode_save_data = {'RMSE': indicator_avg, 'std': indicator_std}
+                # 使用pandas保存成csv
+                dataframe = pd.DataFrame(mode_save_data)
+                dataframe.to_csv(save_avg_csv_pt, index=True, sep=',')
+
+    save_path = save_path + value + '_results'
+    plt.savefig(save_path + '.svg')
+
+    plt.close()
+
+
+# 根据不同污染物的结果画出图像
+def plot_eval_results_by_different_pollution():
+    pass
+
+
+def plot_fed_avg_acc(model_files_path, indicator, fig_save_path):
+    for files_path in model_files_path:
+        filep_l = os.listdir(files_path)
+        print(filep_l)
+        # 创建绘图
+        fig, ax = plt.subplots()
+        datafile_list = []
+
+        for pdir in filep_l:
+            file_path = os.path.join(files_path, pdir)
+            datafile = pd.read_csv(file_path)
+            datafile_list.append(np.array(datafile.values[0][1:], dtype=np.float).reshape(1, -1))
+            x_axis_index = datafile.keys().tolist()
+            x_axis_index = x_axis_index[1:]
+
+        # 用于替代seaborn中的tsplot绘图函数
+        def tsplot(ax, x, data, label_name='', **kw):
+            est = np.mean(data, axis=0)
+            sd = np.std(data, axis=0)
+            cis = (est - sd, est + sd)
+
+            ax.yaxis.grid(True)
+            # ax.fill_between(x, cis[0], cis[1], alpha=0.2, **kw)
+            # ax.plot(x, est, label=label_name, **kw)
+            plt.boxplot(data)
+            ax.set_xticks([y + 1 for y in range(len(x))], )
+            # add x-tick labels
+            plt.setp(ax, xticks=[y + 1 for y in range(len(x))],
+                     xticklabels=x)
+            ax.tick_params(labelsize=13)
+            ax.set_ylabel('Test RMSE', size=13)
+            ax.set_xlabel('Pollution', size=13)
+            ax.margins(x=0)
+
+            return est, sd
+
+        xaxis_from_sets = []
+        all_data = np.concatenate(datafile_list, axis=0)
+        indicator_avg, indicator_std = tsplot(ax, x_axis_index, all_data, label_name='')
+        # 保存到本地
+        fp_splits = files_path.split('/')
+        save_avg_csv_pt = os.path.join(*fp_splits[:-1]) + indicator + '_avg_resluts.csv'
+        mode_save_data = {'avg': indicator_avg, 'std': indicator_std}
+
+        # 使用pandas保存成csv
+        dataframe = pd.DataFrame(mode_save_data, index=x_axis_index)
+        dataframe.to_csv(save_avg_csv_pt, index=True, sep=',')
+        # ax.plot(x_axis_index, [96.4]*100, label='None-fed', linestyle='dashed')
+        plt.savefig(fig_save_path + '{}_avg_results_boxplot.svg'.format(indicator))
+
+
+def show_fed_eval_results(args, exp_name, results_saved_file, results_plot_file, cross_validation_sets):
+    result_save_root = './{}/'.format(results_saved_file) + exp_name + '/'
+    plots_save_root = './{}/'.format(results_plot_file) + exp_name + '/'
+    indicator_list = ['rmse', 'd2', 'r2', 'all_rmse']
+    leg = ['Federated', 'Independent']
+
+    for indicator_name in indicator_list:
+        # 建立保存结果的文件夹
+        indicator_avg_results_csv_save_fpth = result_save_root + 'avg_' + indicator_name + '/'
+        for mode in leg:
+            mkdir(indicator_avg_results_csv_save_fpth + mode + '/')
+
+        # 计算每个数据集的几次实验的均值
+        for c in range(cross_validation_sets):
+            results_logdir = [result_save_root + 'datasets_' + str(c) + '/' + indicator_name + '/' + model_name + '/'
+                              for model_name in ['fed', 'idpt']]
+
+            compute_avg_of_data_in_file(args, c, results_logdir, indicator_avg_results_csv_save_fpth,
+                                        indicator_name, leg)
+
+        # 绘制测试结果图像
+        print('\033[0;34;40m [Visulize] Save every component indicator result \033[0m')
+        print('[Visulize] {} results'.format(indicator_name))
+
+        results_logdir = [result_save_root + 'avg_' + indicator_name + '/' + model_name + '/' for model_name in leg]
+        fig_save_path = plots_save_root + indicator_name + '/'
+        csv_save_fpth = result_save_root + 'avg_' + indicator_name + '/'
+        mkdir(fig_save_path)
+
+        # 将每个数据集计算的均值再计算总的均值和绘制方差均值线图
+        plot_indicator_avg_results_m(results_logdir, fig_save_path, 'station', indicator_name, csv_save_fpth,
+                                     select_dim=arg.select_dim)
+        # plot_fed_avg_acc(results_logdir, indicator_name, fig_save_path)
+        # plot_indicator_results(results_logdir, fig_save_path, indicator_name)
+
+        print("\033[0;34;40m >>>[Visulize] Finished save {} resluts figures! \033[0m".format(indicator_name))
+
+
 if __name__ == '__main__':
-    args = args_parser()
-    dataset_name = 'air_quality_datasets'
-    datasets_satistical(dataset_name, args.selected_stations, args.select_dim, )
+    arg = args_parser()
+
+    # 做实验
+    exp_total_time = 1
+    cross_validation_set_num = 5
+
+    result_saved_file = 'Fed_wGAN_results'
+    result_plot_file = 'Fed_wGAN_plot_results_test'
+
+    indicator_list = ['rmse', 'd2', 'r2', 'all_rmse']
+
+    # params_test_list = [0.9]
+    # test_param_name = 'p_hint'
+
+    # 训练模式，是训练一次还是根据不同的参数训练多次
+    training_model = 'One_time'  # Many_time / One_time
+
+    if training_model == 'Many_time':
+        params_test_list = [5]
+        test_param_name = 'missing_rate'
+        Dname_prefix = 'one_mi_v1((A{})_1r)'
+        Dname_suffix = ''
+    elif training_model == 'One_time':
+        params_test_list = [1]
+        test_param_name = 'One_time'
+        # dataset_number = 'one_mi((A5_B10_E15)_111)'
+        dataset_name = '(A5_A10_A15)_nCO_532r_One_time'
+        # dataset_name = '(1P10_2P20_3P30)_532r_One_time'
+
+    for param in params_test_list:
+
+        print('**  {} params test: {}  **'.format(test_param_name, param))
+        if training_model == 'Many_time':
+            dataset_name = Dname_prefix.format(param, param, param) + '_' + Dname_suffix
+        # dataset_name = 'one_mi_v1((A{})_1r_v3)'.format(param)
+        exp_name = 'C_Test_{}_FedWGAI_T1'.format(dataset_name)
+
+        show_fed_eval_results(arg, exp_name, result_saved_file, result_plot_file, cross_validation_set_num)

@@ -17,7 +17,7 @@ plt.style.use('seaborn')
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 
 
-def fed_test(G, dataset, station, selected_dim=None):
+def fed_test(G, g_input_dim, dataset, station, selected_dim=None):
 
     # 写入测试过程数据
     # fw_name = './results/fed_test_on_' + station + '_' + get_time_stamp() + '_log.txt'
@@ -31,17 +31,22 @@ def fed_test(G, dataset, station, selected_dim=None):
     max_val = dataset['max_val']
 
     # 对算法进行测试
-    Z_mb = sample_Z(Test_No, Dim)
+    Z_mb = sample_Z(Test_No, g_input_dim)
     M_mb = testM
     X_mb = testX
 
-    New_X_mb = M_mb * X_mb + (1 - M_mb) * Z_mb  # Missing Data Introduce
+    # New_X_mb = M_mb * X_mb + (1 - M_mb) * Z_mb  # Missing Data Introduce
+    if g_input_dim == Dim:
+        New_X_mb = M_mb * X_mb + (1 - M_mb) * Z_mb  # Missing Data Introduce
+    else:
+        New_X_mb = Z_mb
 
     X_mb = torch.tensor(X_mb, device='cuda', dtype=torch.float32)
     M_mb = torch.tensor(M_mb, device='cuda', dtype=torch.float32)
     New_X_mb = torch.tensor(New_X_mb, device='cuda', dtype=torch.float32)
 
-    G_sample = G(New_X_mb, M_mb)
+    with torch.no_grad():
+        G_sample = G(New_X_mb, M_mb)
     '''
     # %% MSE Performance metric
     MSE_final = torch.mean(((1 - M_mb) * X_mb - (1 - M_mb) * G_sample) ** 2) / torch.mean(1 - M_mb)
@@ -91,7 +96,7 @@ def fed_test(G, dataset, station, selected_dim=None):
         d2_l.append(d2)
         r2_l.append(r2)
 
-        print('{} RMSE: {}, D2: {}  scipy pearsonr R2: {}'.format(selected_dim[i], rmse, d2, r2))
+        print('[{} Eval] {} RMSE: {}, D2: {}  scipy pearsonr R2: {}'.format(station, selected_dim[i], rmse, d2, r2))
 
     # print("Imputed test data:")
     # np.set_printoptions(formatter={'float': lambda x: "{0:0.8f}".format(x)})
@@ -103,7 +108,7 @@ def fed_test(G, dataset, station, selected_dim=None):
 
 def fed_gain_test_exp(args, save_path='', exp_num=None):
 
-    if args.gan_categories == 'WGAN':
+    if args.gan_categories == 'wGAN':
         from WAGIN_model import Generator, Discriminator
     else:
         from GAIN_model import Generator, Discriminator
@@ -112,8 +117,8 @@ def fed_gain_test_exp(args, save_path='', exp_num=None):
     # args = args_parser()
     args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    Dim = len(args.select_dim)  # 数据维度
+    data_dim = len(args.select_dim)  # 真实数据维度，即生成器输出
+    input_dim = args.input_dim  # 输入随机向量维度
     G_H_Dim = args.G_hidden_dim  # 设置G隐藏层的网络单元数量
     D_H_Dim = args.G_hidden_dim  # 设置D隐藏层的网络单元数量
 
@@ -132,9 +137,9 @@ def fed_gain_test_exp(args, save_path='', exp_num=None):
 
     # 建立GAIN model
     # 新建生成器网络G
-    G = Generator(Dim, G_H_Dim).to(device)
+    G = Generator(input_dim, G_H_Dim, data_dim).to(args.device)
     # 新建判别器网络D
-    D = Discriminator(Dim, D_H_Dim).to(device)
+    D = Discriminator(data_dim, D_H_Dim).to(args.device)
 
     # 模型存储文件夹
     # model_file = save_path.split('/')[2]
@@ -165,12 +170,12 @@ def fed_gain_test_exp(args, save_path='', exp_num=None):
         idpt_r2_on_test_results = []
         idpt_all_rmse_on_test_results = []
         for idpt_g, dataset, station in zip(independent_usrs_G, all_station_datasets, stations):
-            mse, d2, p2, all_rmse = fed_test(idpt_g, dataset, station, args.select_dim)
+            mse, d2, p2, all_rmse = fed_test(idpt_g, input_dim, dataset, station, args.select_dim)
             idpt_mse_on_test_results.append(mse)
             idpt_d2_on_test_results.append(d2)
             idpt_r2_on_test_results.append(p2)
             idpt_all_rmse_on_test_results.append(all_rmse)
-            print('- Station {} complete independent evaluation!\n'.format(station))
+            print('[Idpt eval]- Station {} complete independent evaluation!\n'.format(station))
         idpt_save_csv_pt = save_path + 'rmse/idpt/idpt_mse_test_results_' + str(exp_num) + '.csv'
         # save_as_csv(idpt_save_csv_pt, idpt_mse_on_test_results, stations, 'MSE')
         save2csv(idpt_save_csv_pt, idpt_mse_on_test_results, stations, args.select_dim)
@@ -183,27 +188,24 @@ def fed_gain_test_exp(args, save_path='', exp_num=None):
         # 保存all-rsme
         fed_save_csv_pt = save_path + 'all_rmse/idpt/idpt_all_rmse_test_results_' + str(exp_num) + '.csv'
         save_as_csv(fed_save_csv_pt, idpt_all_rmse_on_test_results, 'all_rmse')
-        print('>>> Finished Idpt model evaluate on Test datasets!\n')
+        print('[Idpt eval]>>> Finished Idpt model evaluate on Test datasets!\n')
 
     # 载入本地联邦模型参数
     load_model(G, D, 'fed', station='', save_file=model_file)
 
-    print('Generater network :\n', G)
-    print('Discriminator network :\n', D)
-
     # testing 在测试集进行评估
-    print('===================== Federated station Test =======================')
+    print('[Fed eval]===================== Federated station Test =======================')
     fed_mse_on_test_results = []
     fed_d2_on_test_results = []
     fed_r2_on_test_results = []
     all_rmse_on_test_results = []
     for dataset, station in zip(all_station_datasets, stations):
-        mse, d2, p2, all_rmse = fed_test(G, dataset, station, args.select_dim)
+        mse, d2, p2, all_rmse = fed_test(G, input_dim, dataset, station, args.select_dim)
         fed_mse_on_test_results.append(mse)
         fed_d2_on_test_results.append(d2)
         fed_r2_on_test_results.append(p2)
         all_rmse_on_test_results.append(all_rmse)
-        print('- Station {} complete federated evaluation!\n'.format(station))
+        print('[Fed Eval] Station {} complete federated evaluation!\n'.format(station))
     # 保存到本地
     fed_save_csv_pt = save_path + 'rmse/fed/fed_mse_test_results_' + str(exp_num) + '.csv'
     save2csv(fed_save_csv_pt, fed_mse_on_test_results, stations, args.select_dim)
@@ -217,7 +219,7 @@ def fed_gain_test_exp(args, save_path='', exp_num=None):
     # 保存all-rsme
     fed_save_csv_pt = save_path + 'all_rmse/fed/fed_all_rmse_test_results_' + str(exp_num) + '.csv'
     save_as_csv(fed_save_csv_pt, all_rmse_on_test_results, 'all_rmse')
-    print('>>> Finished Fed model evaluate on Test datasets!')
+    print('>>>[Fed Eval] Finished Fed model evaluate on Test datasets!')
 
 
 def compute_indicator_results(args, indicator_list, results_file_saved_path, fig_save_file='', leg=None,
@@ -391,20 +393,6 @@ def plot_all_algorithm_indicator_results(args, indicator_list, results_file_save
     return True
 
 
-def plot_all_algorithm_results_test():
-    from param_options import args_parser
-
-    args = args_parser()
-    args.dataset_path = './constructed_datasets_6_dn(10_SI2)/'
-
-    exp_name = 'FedWeightAvg(train_number_soft)_6_dn(10_SI2)_100_32(0.001_0.001_bs_128)_32(phint_0.95)'
-    plots_file = './plot_results/' + exp_name + '/'
-    result_save_file = './results_v2/' + exp_name + '/'
-    indicator_list = ['rmse', 'd2', 'r2', 'all_rmse']
-    leg = ['Fed', 'Independent', 'EM']
-    plot_all_algorithm_indicator_results(args, indicator_list, result_save_file, plots_file, leg)
-
-
 def plot_indicator_avg_results_m(logdir, save_path, xaxis, value, save_csv_fpth, leg=None, condition=None):
     # 重新实现了seaborn的带有均值线的多次实验结果图
     if leg is None:
@@ -552,43 +540,61 @@ def run_multi_cross_validation_datasets_test():
 
 
 if __name__ == '__main__':
-    '''
     args = args_parser()
 
     # 做实验
-    exp_time = 5
-    exp_name = 'FedWeightAvg(soft)_6_dn(5_5_SI2_5_SI2_5_SI2_5_SI2_5_SI3)_100_32(0.001_0.001_bs_128)_32(phint_0.95)'
+    exp_total_time = 1
+    cross_validation_sets = 1
 
-    result_save_file = './results_v2/' + exp_name + '/0/'
-    plots_file = './plot_results/' + exp_name + '/'
+    results_saved_file = 'Fed_wGAN_results'
+    results_plot_file = 'Fed_wGAN_plot_results'
+
     indicator_list = ['rmse', 'd2', 'r2', 'all_rmse']
 
-    for exp_ in range(exp_time):
-        print('>>>>   运行模型测试')
-        args.dataset_path = './constructed_datasets_6_dn(5_5_SI2_5_SI2_5_SI2_5_SI2_5_SI3)/0/'
-        fed_gain_test_exp(args, result_save_file, exp_)
+    # params_test_list = [0.9]
+    # test_param_name = 'p_hint'
 
-    # 绘制测试结果图像
-    print('====================== Save every component indicator result ========================')
-    for indicator in indicator_list:
-        print('{} results'.format(indicator))
-        if indicator == 'all_rmse':
-            results_logdir = [result_save_file + indicator + '/' + model_name + '/' for model_name in ['fed', 'idpt']]
-            fig_save_path = plots_file + indicator + '/'
-            mkdir(fig_save_path)
-            plot_indicator_results(results_logdir, fig_save_path, 'all_rmse')
-        else:
-            for component in args.select_dim:
-                results_logdir = [result_save_file + indicator + '/' + model_name + '/' for model_name in
-                                  ['fed', 'idpt']]
-                fig_save_path = plots_file + indicator + '/'
-                mkdir(fig_save_path)
-                plot_indicator_results(results_logdir, fig_save_path, component)
-    '''
-    # compute_indicator_results(args, indicator_list, result_save_file)
-    #
-    # plot_all_algorithm_results_test()
+    # 训练模式，是训练一次还是根据不同的参数训练多次
+    training_model = 'One_time'  # Many_time / One_time
 
-    run_multi_cross_validation_datasets_test()
+    if training_model == 'Many_time':
+        params_test_list = [5]
+        test_param_name = 'missing_rate'
+        Dname_prefix = 'one_mi_v1((A{})_1r)'
+        Dname_suffix = ''
+    elif training_model == 'One_time':
+        params_test_list = [1]
+        test_param_name = 'One_time'
+        # dataset_number = 'one_mi((A5_B10_E15)_111)'
+        dataset_name = '(A5_A10_A15)_nCO_532r_One_time'
+        # dataset_name = '(1P10_2P20_3P30)_532r_One_time'
 
-    print('######### Finished plotting results figures!')
+    for param in params_test_list:
+
+        print('**  {} params test: {}  **'.format(test_param_name, param))
+        if training_model == 'Many_time':
+            dataset_name = Dname_prefix.format(param, param, param) + '_' + Dname_suffix
+        # dataset_name = 'one_mi_v1((A{})_1r_v3)'.format(param)
+        exp_name = 'C_Test_{}_FedWGAI_T1'.format(dataset_name)
+        # 存储主文件路径
+        result_save_main_file = './{}/'.format(results_saved_file) + exp_name + '/'
+        mkdir(result_save_main_file)
+
+        for i in range(cross_validation_sets):
+            print('============= Start training at datasets {} =============='.format(i))
+            # 用于统计各种指标，建立相对应的文件夹
+            result_save_file = './{}/'.format(results_saved_file) + exp_name + '/datasets_{}/'.format(i)
+
+            for index in indicator_list:
+                for model_name in ['fed', 'idpt']:
+                    test_result_save_path = result_save_file + index + '/' + model_name
+                    mkdir(test_result_save_path)
+
+            for exp_t in range(exp_total_time):
+                # 当前数据集
+                args.dataset_path = './constructed_datasets/{}/{}/'.format(dataset_name, i)
+
+                print('[Main Fed Process]******* Training epoch {} *******'.format(exp_t))
+                save_path_pre = result_save_file + str(exp_t) + '/'
+                mkdir(save_path_pre)
+                fed_gain_test_exp(args, result_save_file, exp_t)

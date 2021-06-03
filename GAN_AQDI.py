@@ -12,11 +12,17 @@ from param_options import args_parser
 # from LoadandCreateDatasets import get_saved_datasets
 from CreateAndLoadDatasets import get_saved_datasets, get_saved_datasets_vall
 from util_tools import get_time_stamp, mkdir, save_model, norm, compute_avg_of_data_in_file
-
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from GAN_AQDI_test_run import gain_test_exp, plot_indicator_avg_results_m
 from plot_indexes_resluts import plot_indicator_results
+from Fed_GAIN.show_dataset import plot_fed_avg_acc
+# from Fed_GAIN.GAN_training import GANUpdate as LocalUpdate
+# from Update import LocalUpdate  # 原始的GAN
+from GAN_training import GANUpdate as LocalUpdate
+from GAIN_model import Generator, Discriminator, weights_init
+
+
+matplotlib.use('Agg')
 
 
 def loss_plot(axs, loss_data, name=None):
@@ -25,19 +31,11 @@ def loss_plot(axs, loss_data, name=None):
 
 
 def GAIN_main(args, save_path=''):
-    if args.gan_categories == 'WGAN':
-        # W-GAN
-        from WAGIN_model import Generator, Discriminator, weights_init
-        from WGAN_LocalUpdate import LocalUpdate
-    else:
-        # 原始的GAN
-        from Update import LocalUpdate
-        from GAIN_model import Generator, Discriminator, weights_init
     # parse args
-    args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
+    args.device = torch.device('cuda' if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    Dim = len(args.select_dim)  # 数据维度
+    data_dim = len(args.select_dim)  # 真实数据维度，即生成器输出
+    input_dim = args.input_dim  # 输入随机向量维度
     G_H_Dim = args.G_hidden_dim  # 设置G隐藏层的网络单元数量
     D_H_Dim = args.G_hidden_dim  # 设置D隐藏层的网络单元数量
 
@@ -55,12 +53,12 @@ def GAIN_main(args, save_path=''):
     num_p = len(args.selected_stations)
     num_d = args.num_d
     for p, d, dataset, station in zip(range(num_p), num_d,
-                                                    all_station_datasets, stations):
+                                      all_station_datasets, stations):
         # 建立GAIN model
         # 新建生成器网络G
-        G = Generator(Dim, G_H_Dim).to(device)
+        G = Generator(input_dim, G_H_Dim, data_dim).to(args.device)
         # 新建判别器网络D
-        D = Discriminator(Dim, D_H_Dim).to(device)
+        D = Discriminator(data_dim, D_H_Dim).to(args.device)
         print('Generater network :\n', G)
         print('Discriminator network :\n', D)
 
@@ -93,7 +91,7 @@ if __name__ == '__main__':
     indicator_list = ['rmse', 'd2', 'r2', 'all_rmse']
     model_name_list = ['idpt']
 
-    params_test_list = [10]
+    params_test_list = [15, 20, 25, 30, 35, 40]
     test_param_name = 'missing_ratio'
 
     # params_test_list = [10]
@@ -102,9 +100,9 @@ if __name__ == '__main__':
     for param in params_test_list:
 
         print('**  {} params test: {}  **'.format(test_param_name, param))
-        dataset_number = 'one_mi_v1((A{})_1r)'.format(param)
+        dataset_number = '(A{})_normCO_1r_1P'.format(param)
         # dataset_number = 'one_mi((A{})_1)'.format(param)
-        exp_name = 'GAIN_adm_lrs_A10P09D5T3_{}_lastest_T3'.format(dataset_number)
+        exp_name = 'GANI_{}'.format(dataset_number)
         # args.alpha = param
         # exp_name = 'Test{}_P09D3T3_nc1a{}_GAIN_{}'.format(get_time_stamp(), param, dataset_number)
         ex_params_settings = {
@@ -121,6 +119,9 @@ if __name__ == '__main__':
             'optimizer': 'Adam',
             'idpt_d_lr': args.d_lr,
             'idpt_g_lr': args.g_lr,
+            'lr_decay': args.lr_decay,
+            'lr_decay_rate': args.g_lr_decay,
+            'lr_decay_step': args.g_lr_decay_step,
             'clip_value': args.clip_value,
             'p_hint': args.p_hint,
             'alpha': args.alpha
@@ -162,34 +163,40 @@ if __name__ == '__main__':
 
         result_save_root = './{}/'.format(results_saved_file) + exp_name + '/'
         plots_save_root = './{}/'.format(results_plot_file) + exp_name + '/'
-        indicator_name = 'all_rmse'
-        leg = ['Independent']
+        # indicator_name = 'all_rmse'
+        leg = ['Local']
 
-        # 建立保存结果的文件夹
-        indicator_avg_results_csv_save_fpth = result_save_root + 'avg_' + indicator_name + '/'
-        for mode in leg:
-            mkdir(indicator_avg_results_csv_save_fpth + mode + '/')
+        for indicator_name in indicator_list:
+            # 建立保存结果的文件夹
+            indicator_avg_results_csv_save_fpth = result_save_root + 'avg_' + indicator_name + '/'
 
-        # 计算每个数据集的几次实验的均值
-        for c in range(cross_validation_sets):
-            results_logdir = [result_save_root + 'datasets_' + str(c) + '/' + indicator_name + '/' + model_name + '/'
-                              for model_name in model_name_list]
+            for mode in leg:
+                diff_indicator_avg_result_save_dir = indicator_avg_results_csv_save_fpth + mode + '/'
+                mkdir(diff_indicator_avg_result_save_dir)
 
-            compute_avg_of_data_in_file(args, c, results_logdir, indicator_avg_results_csv_save_fpth,
-                                        indicator_name, leg)
+            # 计算每个数据集的几次实验的均值
+            for c in range(cross_validation_sets):
+                results_logdir = [
+                    result_save_root + 'datasets_' + str(c) + '/' + indicator_name + '/' + model_name + '/'
+                    for model_name in model_name_list]
 
-        # 绘制测试结果图像
-        print('====================== Save every component indicator result ========================')
+                compute_avg_of_data_in_file(args, c, results_logdir, indicator_avg_results_csv_save_fpth,
+                                            indicator_name, leg)
 
-        print('{} results'.format(indicator_name))
+            # 绘制测试结果图像
+            print('\033[0;34;40m [Visulize] Save every component indicator result \033[0m')
 
-        results_logdir = [result_save_root + 'avg_' + indicator_name + '/' + model_name + '/' for model_name in leg]
-        fig_save_path = plots_save_root + indicator_name + '/'
-        csv_save_fpth = result_save_root + 'avg_' + indicator_name + '/'
-        mkdir(fig_save_path)
+            print('[Visulize] {} results'.format(indicator_name))
 
-        # 将每个数据集计算的均值再计算总的均值和绘制方差均值线图
-        plot_indicator_avg_results_m(results_logdir, fig_save_path, 'station', indicator_name, csv_save_fpth, leg=leg)
-        # plot_indicator_results(results_logdir, fig_save_path, indicator_name, leg=leg)
+            results_logdir = [result_save_root + 'avg_' + indicator_name + '/' + model_name + '/' for model_name in leg]
+            fig_save_path = plots_save_root + indicator_name + '/'
+            csv_save_fpth = result_save_root + 'avg_' + indicator_name + '/'
+            mkdir(fig_save_path)
 
-        print(">>> Finished save resluts figures!")
+            # 将每个数据集计算的均值再计算总的均值和绘制方差均值线图
+            # plot_indicator_avg_results_m(results_logdir, fig_save_path, 'station',
+            #                              indicator_name, csv_save_fpth, leg=leg)
+            plot_fed_avg_acc(results_logdir, indicator_name, fig_save_path)
+            # plot_indicator_results(results_logdir, fig_save_path, indicator_name, leg=leg)
+
+            print("\033[0;34;40m >>>[Visulize] Finished save {} resluts figures! \033[0m".format(indicator_name))

@@ -13,7 +13,6 @@ import matplotlib.pyplot as plt
 from util_tools import get_time_stamp, mkdir, sample_Z
 from util_tools import loss_plot
 
-
 clip_g = 1e-2
 lambda_gp = 10
 
@@ -33,6 +32,8 @@ class LocalUpdate(object):
         self.Test_No = None
         self.p_hint = args.p_hint
         self.alpha = args.alpha
+
+        self.cur_epoch = 0
 
     def train(self, G, D, dataset):
 
@@ -107,7 +108,7 @@ class LocalUpdate(object):
                                                                                                    New_X=New_X_mb,
                                                                                                    H=H_mb)
                     scaler_G.scale(G_loss_curr).backward()
-                    scaler_G.step(optimizer_D)
+                    scaler_G.step(optimizer_G)
                     scaler_G.update()
 
             else:
@@ -122,7 +123,6 @@ class LocalUpdate(object):
                     optimizer_G.zero_grad()
                     G_loss_curr, MSE_train_loss_curr, MSE_test_loss_curr = self.compute_G_loss(G, D, X=X_mb, M=M_mb,
                                                                                                New_X=New_X_mb, H=H_mb)
-
 
                     G_loss_curr.backward()
                     optimizer_G.step()
@@ -171,10 +171,10 @@ class LocalUpdate(object):
         # 用于调整学习率
         if self.args.lr_decay:
             D_StepLR = torch.optim.lr_scheduler.StepLR(optimizer_D,
-                                                       step_size=self.args.d_lr_decay_step*self.args.epochs,
+                                                       step_size=self.args.d_lr_decay_step,
                                                        gamma=self.args.d_lr_decay)
             G_StepLR = torch.optim.lr_scheduler.StepLR(optimizer_G,
-                                                       step_size=self.args.g_lr_decay_step*self.args.epochs,
+                                                       step_size=self.args.g_lr_decay_step,
                                                        gamma=self.args.g_lr_decay)
             # D_StepLR = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer_D, mode='min', factor=0.1, patience=10,
             #                                                       verbose=True, threshold=0.0001,
@@ -210,88 +210,95 @@ class LocalUpdate(object):
 
         print('Station ' + station_name + ' is under Training...')
         # 这次不加上这个 self.args.local_ep
-        for j in tqdm(range(self.args.epochs)):     # 暂时取消self.args.local_ep *
-            mb_idx = self.sample_idx(self.Train_No, mb_size)
-            X_mb = self.trainX[mb_idx, :]
+        with tqdm(range(self.args.epochs)) as tq:
+            for j in tq:  # 暂时取消self.args.local_ep *
+                self.cur_epoch = j
+                tq.set_description('Local Updating')
+                mb_idx = self.sample_idx(self.Train_No, mb_size)
+                X_mb = self.trainX[mb_idx, :]
 
-            Z_mb = sample_Z(mb_size, self.Dim)
-            M_mb = self.trainM[mb_idx, :]
+                Z_mb = sample_Z(mb_size, self.args.input_dim) * 0.1
+                M_mb = self.trainM[mb_idx, :]
 
-            # 当p_hint=1时，即为原始的condition gan；否则，即为GAIN算法
-            if self.p_hint == 1.0:
-                H_mb = M_mb
-            else:
-                H_mb1 = self.sample_M(mb_size, self.Dim, 1 - self.p_hint)
-                H_mb = M_mb * H_mb1
+                # 当p_hint=1时，即为原始的condition gan；否则，即为GAIN算法
+                if self.p_hint == 1.0:
+                    H_mb = M_mb
+                else:
+                    H_mb1 = self.sample_M(mb_size, self.Dim, 1 - self.p_hint)
+                    H_mb = M_mb * H_mb1
 
-            New_X_mb = M_mb * X_mb + (1 - M_mb) * Z_mb  # Missing Data Introduce
+                New_X_mb = M_mb * X_mb + (1 - M_mb) * Z_mb  # Missing Data Introduce
 
-            X_mb = torch.tensor(X_mb, device="cuda", dtype=torch.float32)
-            M_mb = torch.tensor(M_mb, device="cuda", dtype=torch.float32)
-            H_mb = torch.tensor(H_mb, device="cuda", dtype=torch.float32)
-            New_X_mb = torch.tensor(New_X_mb, device="cuda", dtype=torch.float32)
+                X_mb = torch.tensor(X_mb, device=self.args.device, dtype=torch.float32)
+                M_mb = torch.tensor(M_mb, device=self.args.device, dtype=torch.float32)
+                H_mb = torch.tensor(H_mb, device=self.args.device, dtype=torch.float32)
+                New_X_mb = torch.tensor(New_X_mb, device=self.args.device, dtype=torch.float32)
 
-            if self.args.use_amp:
-                optimizer_D.zero_grad()
-                with autocast():
-                    D_loss_curr = self.compute_D_loss(G, D, M=M_mb, New_X=New_X_mb, H=H_mb)
-                scaler_D.scale(D_loss_curr).backward()
-                scaler_D.step(optimizer_D)
-                scaler_D.update()
-
-                if j % self.args.fed_n_critic == 0:
-                    optimizer_G.zero_grad()
+                if self.args.use_amp:
+                    optimizer_D.zero_grad()
                     with autocast():
-                        G_loss_curr, MSE_train_loss_curr, MSE_test_loss_curr = self.compute_G_loss(G, D, X=X_mb, M=M_mb,
-                                                                                                   New_X=New_X_mb,
-                                                                                                   H=H_mb)
-                    scaler_G.scale(G_loss_curr).backward()
-                    scaler_G.step(optimizer_D)
-                    scaler_G.update()
-            else:
-                optimizer_D.zero_grad()
-                D_loss_curr = self.compute_D_loss(G, D, M=M_mb, New_X=New_X_mb, H=H_mb)
+                        D_loss_curr = self.compute_D_loss(G, D, M=M_mb, New_X=New_X_mb, H=H_mb)
+                    scaler_D.scale(D_loss_curr).backward()
+                    scaler_D.step(optimizer_D)
+                    scaler_D.update()
 
-                D_loss_curr.backward()
-                optimizer_D.step()
+                    if j % self.args.n_critic == 0:
+                        optimizer_G.zero_grad()
+                        with autocast():
+                            G_loss_curr, MSE_train_loss_curr, RMSE_test_loss_curr = self.compute_G_loss(G, D,
+                                                                                                        X=X_mb,
+                                                                                                        M=M_mb,
+                                                                                                        New_X=New_X_mb,
+                                                                                                        H=H_mb)
+                        scaler_G.scale(G_loss_curr).backward()
+                        scaler_G.step(optimizer_D)
+                        scaler_G.update()
+                else:
+                    optimizer_D.zero_grad()
+                    D_loss_curr = self.compute_D_loss(G, D, M=M_mb, New_X=New_X_mb, H=H_mb)
 
-                if j % self.args.n_critic == 0:
-                    optimizer_G.zero_grad()
-                    G_loss_curr, MSE_train_loss_curr, RMSE_test_loss_curr = self.compute_G_loss(G, D, X=X_mb, M=M_mb,
-                                                                                                New_X=New_X_mb, H=H_mb)
+                    D_loss_curr.backward()
+                    optimizer_D.step()
 
-                    G_loss_curr.backward()
-                    optimizer_G.step()
-            if self.args.lr_decay:
-                D_StepLR.step()
-                G_StepLR.step()
+                    if j % self.args.n_critic == 0:
+                        optimizer_G.zero_grad()
+                        G_loss_curr, MSE_train_loss_curr, RMSE_test_loss_curr = self.compute_G_loss(G, D, X=X_mb,
+                                                                                                    M=M_mb,
+                                                                                                    New_X=New_X_mb,
+                                                                                                    H=H_mb)
 
-            # 保存模型的文件夹名称
-            # file_name = save_pth_pre.split('/')[2]
-            file_name = save_pth_pre.split('/')
-            file_name = file_name[2] + '/' + file_name[3]
-            # %% Intermediate Losses
-            if j % 100 == 0:
-                print('Iter: {}'.format(j), end='\t')
-                print('Train_MSE_loss: {:.4}'.format(np.sqrt(MSE_train_loss_curr.item())), end='\t')
-                print('Test_RMSE: {:.4}'.format(np.sqrt(RMSE_test_loss_curr.item())))
-                self.save_model(G, D, file_name, station_name)
+                        G_loss_curr.backward()
+                        optimizer_G.step()
+                if self.args.lr_decay:
+                    D_StepLR.step()
+                    G_StepLR.step()
 
-            # 调整学习率 步骤
-            # G_StepLR.step()
-            # D_StepLR.step()
+                # 保存模型的文件夹名称
+                # file_name = save_pth_pre.split('/')[2]
+                file_name = save_pth_pre.split('/')
+                file_name = file_name[2] + '/' + file_name[3]
+                # %% Intermediate Losses
+                tq.set_postfix(Train_MSE_loss=np.sqrt(MSE_train_loss_curr.item()),
+                               Train_RMSE=np.sqrt(RMSE_test_loss_curr.item()))
+                # 保存模型
+                if j % 100 == 0:
+                    self.save_model(G, D, file_name, station_name)
 
-            if j % 1 == 0:
-                # 保存训练过程数据
-                G_epoch_loss.append(G_loss_curr)
-                D_epoch_loss.append(D_loss_curr)
+                # 调整学习率 步骤
+                # G_StepLR.step()
+                # D_StepLR.step()
 
-                G_MSE_epoch_train_loss.append(MSE_train_loss_curr)
-                G_MSE_epoch_tets_loss.append(RMSE_test_loss_curr)
+                if j % 1 == 0:
+                    # 保存训练过程数据
+                    G_epoch_loss.append(G_loss_curr)
+                    D_epoch_loss.append(D_loss_curr)
 
-                fw_fed_main.write('{}\t {:.5f}\t {:.5f}\t {:.5f}\t {:.5f}\t \n'.format(j, G_loss_curr, D_loss_curr,
-                                                                                       MSE_train_loss_curr,
-                                                                                       RMSE_test_loss_curr))
+                    G_MSE_epoch_train_loss.append(MSE_train_loss_curr)
+                    G_MSE_epoch_tets_loss.append(RMSE_test_loss_curr)
+
+                    fw_fed_main.write('{}\t {:.5f}\t {:.5f}\t {:.5f}\t {:.5f}\t \n'.format(j, G_loss_curr, D_loss_curr,
+                                                                                           MSE_train_loss_curr,
+                                                                                           RMSE_test_loss_curr))
 
         # self.plot_progess_info(axs[0, 0], G_epoch_loss, 'G loss')
         # self.plot_progess_info(axs[0, 1], D_epoch_loss, 'D loss')
@@ -328,7 +335,8 @@ class LocalUpdate(object):
         # D_prob = D(Hat_New_X, M)
 
         # 损失函数
-        D_loss = -torch.mean(M * torch.log(D_prob + 1e-8) + (1 - M) * torch.log(1. - D_prob + 1e-8))
+        D_loss = -torch.mean(M * torch.log(D_prob + 1e-8) + (1 - M) * torch.log(1. - D_prob))
+        # D_loss = -torch.mean(M * torch.log(D_prob) - (1 - M) * torch.log(D_prob))
         return D_loss
 
     def compute_G_loss(self, G, D, X, M, New_X, H):
@@ -352,11 +360,15 @@ class LocalUpdate(object):
         # D_prob = D(Hat_New_X, M)
 
         # %% Loss
-        G_loss1 = -torch.mean((1 - M) * torch.log(D_prob + 1e-8))
+        G_loss1 = -torch.mean((1 - M) * torch.log(D_prob))
         MSE_train_loss = torch.mean((M * New_X - M * G_sample) ** 2) / torch.mean(M)
         # RMSE_train_loss = torch.sqrt(MSE_train_loss)
 
-        G_loss = G_loss1 + self.alpha * MSE_train_loss
+        alpha = self.alpha
+        if (self.cur_epoch + 1) % self.args.d_lr_decay_step == 0:
+            alpha = self.alpha * 0.9
+
+        G_loss = G_loss1 + alpha * MSE_train_loss
 
         # %% MSE Performance metric
         MSE_test_loss = torch.mean(((1 - M) * X - (1 - M) * G_sample) ** 2) / torch.mean(1 - M)

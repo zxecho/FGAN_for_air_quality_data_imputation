@@ -1,7 +1,7 @@
 import numpy as np
 import random
 import pandas as pd
-from util_tools import save2json, load_json, mkdir, normalization
+from util_tools import save2json, load_json, mkdir
 import matplotlib.pyplot as plt
 import os
 
@@ -253,7 +253,7 @@ def construct_train_test_dataset(Data, missing_rate=0.2, save=False,
     """
     :param missing_rate:
     :param dataset_path:
-    :param Data: 构造的数据
+    :param Data: 构造的数据L
     :param save: 是否保存
     :param station: 站点名称
     :return:
@@ -264,15 +264,25 @@ def construct_train_test_dataset(Data, missing_rate=0.2, save=False,
     # 数据参数
     Dim = Data.shape[1]  # 数据维度
 
+    # 归一化
     # Normalization (0 to 1)
     Min_Val = np.zeros(Dim)
     Max_Val = np.zeros(Dim)
 
+    # mini-max normalization
     for i in range(Dim):
         Min_Val[i] = np.min(Data[:, i])
-        Data[:, i] = Data[:, i] - np.min(Data[:, i])
         Max_Val[i] = np.max(Data[:, i])
-        Data[:, i] = Data[:, i] / (np.max(Data[:, i]) + 1e-6)
+        if i == 3:
+            Data[:, i] = Data[:, i] - np.min(Data[:, i])
+            Data[:, i] = Data[:, i] / (Max_Val[i] - Min_Val[i] + 1e-8)
+
+    # mean-std normalization
+    # for i in range(Dim):
+    #     Min_Val[i] = np.std(Data[:, i])
+    #     Max_Val[i] = np.mean(Data[:, i])
+    #     Data[:, i] = Data[:, i] - Max_Val[i]
+    #     Data[:, i] = Data[:, i] / (Min_Val[i] + 1e-8)
 
     # Missing = construct_missing_mask_v2(Data, missing_rate)
 
@@ -544,16 +554,16 @@ if __name__ == '__main__':
     exp_num = 5
 
     generate_condition = 'one_time'  # general /  one_time / missing_rate
-    dataset_name_temp = '(A5_A20_A30)_532r'
+    dataset_name_temp = '(A5_A10_A15)_nCO_321r'
 
     params_test_list = []
     test_param_name = None
 
     if generate_condition == 'missing_rate':
-        params_test_list = [5, 10, 15, 20, 25, 30]
+        params_test_list = [5, 10, 15, 20, 25, 30, 35, 40]
         test_param_name = 'missing_rate'
-        Dname_prefix = '(A{}_A{}_A{})'
-        Dname_suffix = '111r_1P'
+        Dname_prefix = '(A{})'
+        Dname_suffix = 'norm_1r_1P'
     elif generate_condition == 'one_time':
         params_test_list = [1]
         test_param_name = 'One_time'

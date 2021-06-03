@@ -15,11 +15,13 @@ from plot_indexes_resluts import plot_indicator_results, get_all_datasets
 matplotlib.use('Agg')
 
 
-def fed_test(G, dataset, station, selected_dim=None):
+def fed_test(G, g_input_dim, dataset, station, selected_dim=None):
 
     # 写入测试过程数据
     # fw_name = './results/fed_test_on_' + station + '_' + get_time_stamp() + '_log.txt'
     # fw_test = open(fw_name, 'w+')
+
+    G.eval()
 
     Dim = dataset['d']
     testX = dataset['test_x']
@@ -29,17 +31,21 @@ def fed_test(G, dataset, station, selected_dim=None):
     max_val = dataset['max_val']
 
     # 对算法进行测试
-    Z_mb = sample_Z(Test_No, Dim)
+    Z_mb = sample_Z(Test_No, g_input_dim)
     M_mb = testM
     X_mb = testX
 
-    New_X_mb = M_mb * X_mb + (1 - M_mb) * Z_mb  # Missing Data Introduce
+    if g_input_dim == Dim:
+        New_X_mb = M_mb * X_mb + (1 - M_mb) * Z_mb  # Missing Data Introduce
+    else:
+        New_X_mb = Z_mb
 
     X_mb = torch.tensor(X_mb, device='cuda', dtype=torch.float32)
     M_mb = torch.tensor(M_mb, device='cuda', dtype=torch.float32)
     New_X_mb = torch.tensor(New_X_mb, device='cuda', dtype=torch.float32)
 
-    G_sample = G(New_X_mb, M_mb)
+    with torch.no_grad():
+        G_sample = G(New_X_mb, M_mb)
     '''
     # %% MSE Performance metric
     MSE_final = torch.mean(((1 - M_mb) * X_mb - (1 - M_mb) * G_sample) ** 2) / torch.mean(1 - M_mb)
@@ -101,17 +107,16 @@ def fed_test(G, dataset, station, selected_dim=None):
 
 def gain_test_exp(args, save_path='', exp_num=None):
 
-    if args.gan_categories == 'WGAN':
+    if args.gan_categories == 'wGAN':
         from WAGIN_model import Generator, Discriminator
     else:
         from GAIN_model import Generator, Discriminator
 
     # parse args
     # args = args_parser()
-    args.device = torch.device('cuda:{}'.format(args.gpu) if torch.cuda.is_available() and args.gpu != -1 else 'cpu')
-
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    Dim = len(args.select_dim)  # 数据维度
+    args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    data_dim = len(args.select_dim)  # 真实数据维度，即生成器输出
+    input_dim = args.input_dim  # 输入随机向量维度
     G_H_Dim = args.G_hidden_dim  # 设置G隐藏层的网络单元数量
     D_H_Dim = args.G_hidden_dim  # 设置D隐藏层的网络单元数量
 
@@ -125,9 +130,9 @@ def gain_test_exp(args, save_path='', exp_num=None):
 
     # 建立GAIN model
     # 新建生成器网络G
-    G = Generator(Dim, G_H_Dim).to(device)
+    G = Generator(input_dim, G_H_Dim, data_dim).to(args.device)
     # 新建判别器网络D
-    D = Discriminator(Dim, D_H_Dim).to(device)
+    D = Discriminator(data_dim, D_H_Dim).to(args.device)
 
     # 模型存储文件夹
     # model_file = save_path.split('/')[2]
@@ -137,7 +142,6 @@ def gain_test_exp(args, save_path='', exp_num=None):
     if args.independent_usrs_training:
         # 建立每个客户的独立个体
         independent_usrs_G = []
-        independent_usrs_D = []
 
         for i, s in enumerate(args.selected_stations):
             # 为每个站点新建一个独立的个体网络,载入本地模型
@@ -145,24 +149,23 @@ def gain_test_exp(args, save_path='', exp_num=None):
             independent_D = deepcopy(D)
             # 载入本地的各站点的独立模型
             station_name = s + '{}{}'.format(i, args.num_d[i])
-            load_model(independent_G, independent_D, 'idpt', station_name, model_file)
+            independent_G, _ = load_model(independent_G, independent_D, 'idpt', station_name, model_file)
             independent_usrs_G.append(independent_G)
-            independent_usrs_D.append(independent_D)
 
         # 各站点的独立模型，testing 在测试集进行评估
-        print('============== Independent station Test =======================')
+        print('\033[0;31;40m[Eval] Independent station Test \033[0m')
         idpt_mse_on_test_results = []
         idpt_d2_on_test_results = []
         idpt_r2_on_test_results = []
         idpt_all_rmse_on_test_results = []
         for idpt_g, dataset, station in zip(independent_usrs_G, all_station_datasets, stations):
-            mse, d2, p2, all_rmse = fed_test(idpt_g, dataset, station, args.select_dim)
+            mse, d2, p2, all_rmse = fed_test(idpt_g, input_dim, dataset, station, args.select_dim)
             idpt_mse_on_test_results.append(mse)
             idpt_d2_on_test_results.append(d2)
             idpt_r2_on_test_results.append(p2)
             idpt_all_rmse_on_test_results.append(all_rmse)
-            print('- Station {} complete independent evaluation!\n'.format(station))
-        idpt_save_csv_pt = save_path + 'rmse/idpt/idpt_mse_test_results_' + str(exp_num) + '.csv'
+            print('\033[0;32;40m [Eval] - Station {} complete independent evaluation! \033[0m\n'.format(station))
+        idpt_save_csv_pt = save_path + 'rmse/idpt/idpt_rmse_test_results_' + str(exp_num) + '.csv'
         # save_as_csv(idpt_save_csv_pt, idpt_mse_on_test_results, stations, 'MSE')
         save2csv(idpt_save_csv_pt, idpt_mse_on_test_results, stations, args.select_dim)
         idpt_save_csv_pt = save_path + 'd2/idpt/idpt_d2_test_results_' + str(exp_num) + '.csv'
@@ -174,14 +177,13 @@ def gain_test_exp(args, save_path='', exp_num=None):
         # 保存all-rsme
         fed_save_csv_pt = save_path + 'all_rmse/idpt/idpt_all_rmse_test_results_' + str(exp_num) + '.csv'
         save_as_csv(fed_save_csv_pt, idpt_all_rmse_on_test_results, 'all_rmse')
-        print('>>> Finished Idpt model evaluate on Test datasets!\n')
-    print('>>> Finished Fed model evaluate on Test datasets!')
+        print('\033[0;33;40m >>> [Eval] Finished Idpt model evaluate on Test datasets! \033[0m\n')
 
 
 def plot_indicator_avg_results_m(logdir, save_path, xaxis, value, save_csv_fpth, leg=None, condition=None):
     # 重新实现了seaborn的带有均值线的多次实验结果图
     if leg is None:
-        leg = ['Fed', 'Independent']
+        leg = ['Fed', 'Local']
 
     datas = get_all_datasets(logdir, leg)
     # 创建绘图
