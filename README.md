@@ -3,6 +3,7 @@
 This project is the algorithm codes of paper "Federated Conditional Generative Adversarial Nets Imputation method for Air Quality Missing Data".
 
 ### TODO:
++ [ ] Clean our codes and add English annotation in the future.
 + [ ] Improve project documentation in the future.
 + [X] Update our latest model.
 
